@@ -1,6 +1,6 @@
 import $ from 'jquery';
 import createReactUnit from './unit.js';
-import createElement from './element.js';
+import {createElement} from './element.js';
 import Component from './component.js';
 let React = {
     render,

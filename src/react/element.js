@@ -1,4 +1,4 @@
-class Element {
+export class Element {
     constructor(type, props) {
         this.type = type;
         this.props = props;
@@ -6,8 +6,7 @@ class Element {
 }
 
 // 返回虚拟 dom 用对象来描述元素
-export default function createElement(type, props, ...children) {
-    props = props || {};
+export function createElement(type, props={}, ...children) {
     props.children = children;
     // console.log('type, props', type, props)
     return new Element(type, props);
@@ -18,7 +17,8 @@ export default function createElement(type, props, ...children) {
 
 // babel 编译后的效果
 // React.createElement('div', {name: "XXX", style: {color: 'red'}}, "hello", React.createElement("span", null, "123"))
-// createElement 返回如下虚拟 dom 对象
+
+// 对应的 虚拟 dom 对象如下
 // let a = {
 //     type: 'div',
 //     props: {
