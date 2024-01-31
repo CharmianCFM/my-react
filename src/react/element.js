@@ -13,16 +13,17 @@ export default function createElement(type, props, ...children) {
     return new Element(type, props);
 }
 
-
-{/* <div name="XXX">say<button>hello a</button></div> */}
+// jsx
+{/* <div name="XXX" style={{color: 'red'}}>say<button>hello a</button></div> */}
 
 // babel 编译后的效果
-// React.createElement('div', {name: "XXX"}, "hello", React.createElement("span", null, "123"))
+// React.createElement('div', {name: "XXX", style: {color: 'red'}}, "hello", React.createElement("span", null, "123"))
 // createElement 返回如下虚拟 dom 对象
 // let a = {
 //     type: 'div',
 //     props: {
 //         name: 'XXX',
+//         style: {color: 'red'},
 //         children: [
 //             'say',
 //             {

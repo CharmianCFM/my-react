@@ -2,7 +2,7 @@ import $ from 'jquery';
 class Unit { 
     // 通过父类保存参数
     constructor(element) {
-        this.currentElement = element;
+        this._currentElement = element;
     }
 }
 // 渲染字符串
@@ -16,14 +16,15 @@ class ReactTextUnit extends Unit {
         // 保存当前元素的id
         this._rootId = rootId;
         // 返回当前元素对应的html脚本
-        return `<span data-reactid=${rootId}>${this.currentElement}</span>`;
+        return `<span data-reactid=${rootId}>${this._currentElement}</span>`;
+        // dom.dataset.rootId 或 $().data('rootId') 即可获取到元素id
     }
 }
 // 渲染原生dom组件
 class ReactNativeUnit extends Unit {
     getMarkUp(rootId) { 
         this._rootId = rootId;
-        let {type, props} = this.currentElement; // div name data-reactid
+        let {type, props} = this._currentElement; // div {name data-reactid}
         let tagStart = `<${type} data-reactid="${rootId}"`;
         let tagEnd = `</${type}>`;
         let contentStr = '';
@@ -55,7 +56,7 @@ class ReactNativeUnit extends Unit {
 class ReactCompositUnit extends Unit {
     getMarkUp(rootId) {
         this._rootId = rootId;
-        let {type: Component, props} = this.currentElement;
+        let {type: Component, props} = this._currentElement;
         let componentInstance = new Component(props);
         // 声明周期方法 componentWillMount父类先执行字类再执行
         componentInstance.componentWillMount && componentInstance.componentWillMount();

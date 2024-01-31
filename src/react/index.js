@@ -14,7 +14,8 @@ function render(element, container) {
     // let markUp = `<span data-reactid=${React.nextRootIndex}>${element}</span>`;
     // 写一个工厂函数来创建对应的 react 元素
     let createReactUnitInstance = createReactUnit(element);
-    let markUp = createReactUnitInstance.getMarkUp(React.nextRootIndex);
+    let markUp = createReactUnitInstance.getMarkUp(React.nextRootIndex); // 传参用于设置元素id，返回html字符串
+    // container.innerHtml = markUp;
     $(container).html(markUp);
     // 触发 挂载完成方法
     $(document).trigger('mounted');//所有组件都ok了 发布
