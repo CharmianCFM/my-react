@@ -1,8 +1,8 @@
 import $ from 'jquery';
 import {Element} from './element.js';
-
+import types from './types.js';
 // 差异队列
-let diffQueue;
+let diffQueue = [];
 // 更新的层级
 let updateDepth = 0;
 
@@ -32,9 +32,9 @@ class ReactTextUnit extends Unit {
         return `<span data-reactid="${rootId}">${this._currentElement}</span>`;
         // dom.dataset.rootId 或 $().data('rootId') 即可获取到元素id
     }
+
     // 更新字符串内容
     update(nextElement) {
-        console.log(nextElement)
         if(this._currentElement !== nextElement) {
             this._currentElement = nextElement;
             $(`[data-reactid="${this._rootId}"]`).html(this._currentElement);
@@ -74,7 +74,6 @@ class ReactNativeUnit extends Unit {
                 tagStart += (` class="${props[propName]}" `);
             }
             else if(propName === 'children') {
-                // console.log('-----', props[propName]) 
                 // children: ['hello', element]
                 // element如下
                 // {
@@ -86,11 +85,14 @@ class ReactNativeUnit extends Unit {
                 //         ]
                 //     }
                 // }
-                // 递归循环子节点 
+                // 循环子节点 
                 childStr = props[propName].map((child, index) => {
-                    let childUnit = createReactUnit(child);
-                    // 记录下来方便后续对 child 做 diff
+                    // 1. 渲染子element:即create一个unit
+                    let childUnit = createReactUnit(child); //createReactUnit是个递归过程
+                    // 记录下来方便后续对child做diff 每个 unit 有一个 mountIndex 属性，指明自己在父节点中的索引位置
+                    childUnit._mountIndex = index; 
                     this._renderedChildrenUnits.push(childUnit); 
+                    // 2. 调用unit的getMarkUp得到html字符串
                     return childUnit.getMarkUp(`${rootId}.${index}`)
                 }).join('');
             }
@@ -104,6 +106,7 @@ class ReactNativeUnit extends Unit {
     }
 
     update(nextElement) {
+        // 已经通过showDeepCompare比较过两个的type相同了，此处看props（包括属性和children
         let oldProps = this._currentElement.props;
         let newProps = nextElement.props;
         this.updateDomProperties(oldProps, newProps);
@@ -143,18 +146,134 @@ class ReactNativeUnit extends Unit {
         }
     }
 
-    // 对比新的儿子们和老的 找出差异
     updateDomChildren(newChildrenElements) {
+        updateDepth++;
+        // 1. diff 对比新的儿子们和老的 找出差异
         this.diff(diffQueue, newChildrenElements);
+        updateDepth--;
+        if(updateDepth === 0) {
+            // 2. 打补丁（就是修改的意思） 进行删、插元素
+            this.patch(diffQueue);
+            diffQueue=[];
+        }
+    }
+
+    patch(diffQueue) {
+        // 所有将要删除的节点
+        let deleteChildren = [];
+        // 暂存能复用的节点
+        let deleteMap = {};
+        // diffQueue 里面存的是所有的 diff
+        for(let i = 0; i < diffQueue.length; i++) {
+            let difference = diffQueue[i];
+            if(difference.type === types.MOVE || difference.type === types.REMOVE) {
+                let fromIndex = difference.fromIndex;
+                let oldChild = $(difference.parentNode.children().get(fromIndex));
+                // 进行层级的区分
+                if(!deleteMap[difference.parentId]) {
+                    deleteMap[difference.parentId] = {}
+                }
+                deleteMap[difference.parentId][fromIndex] = oldChild;
+                deleteChildren.push(oldChild);
+            }
+        }
+        // 删除节点
+        $.each(deleteChildren, (idx, item) => $(item).remove());
+        // 插入节点
+        for(let i = 0; i < diffQueue.length; i++) {
+            let difference = diffQueue[i];
+            const {parentNode, toIndex, markup, fromIndex} = difference;
+            switch(difference.type) {
+                case types.INSERT:
+                    this.insertChildAt(parentNode, toIndex, $(markup));
+                break;
+                case types.MOVE:
+                    this.insertChildAt(parentNode, toIndex, deleteMap[difference.parentId][fromIndex]);
+                break;
+                default:
+                break;
+            }
+        }
+    }
+
+    insertChildAt(parentNode, index, newNode) {
+        // 索引 index 的位置有节点就放在节点的前面 ,没有就直接添加子元素
+        let oldChild = parentNode.children().get(index);
+        oldChild ? newNode.insertBefore(oldChild) : newNode.appendTo(parentNode);
     }
 
     diff(diffQueue, newChildrenElements) {
+        // 1.生成一个老的儿子 unit map
         let oldChildrenUnitMap = this.getOldChildrenMap(this._renderedChildrenUnits);
-        let newChildren = this.getNewChildren(oldChildrenUnitMap, newChildrenElements);
+        // 2.生成一个新的儿子 unit的数组
+        let {newChildrenUnits, newChildrenUnitsMap} = this.getNewChildren(oldChildrenUnitMap, newChildrenElements);
+        // 上一个已经确定位置的索引
+        let lastIndex = 0;
+        // 3. 移动或新增节点
+        for(let i = 0; i < newChildrenUnits.length; i++) {
+            let newUnit = newChildrenUnits[i];
+            // 第一个拿到的是key A
+            let newKey = (newUnit._currentElement.props && newUnit._currentElement.props.key) || i.toString();
+            let oldChildUnit = oldChildrenUnitMap[newKey];
+            // 新老一致则复用老节点
+            if(oldChildUnit === newUnit) {
+                if(oldChildUnit._mountIndex < lastIndex) { // 移动老节点
+                    diffQueue.push({
+                        parentId: this._rootId,
+                        parentNode: $(`[data-reactid="${this._rootId}"]`),
+                        type: types.MOVE,
+                        fromIndex: oldChildUnit._mountIndex,
+                        toIndex: i, // 当前位置
+                    })
+                }
+                // lastIndex取较大值
+                lastIndex = Math.max(lastIndex, oldChildUnit._mountIndex);
+            }
+            else {
+                // 老的里面有相同key的 但是节点不相等 删除掉
+                if(oldChildUnit) {
+                    diffQueue.push({
+                        parentId: this._rootId,
+                        parentNode: $(`[data-reactid="${this._rootId}"]`),
+                        type: types.REMOVE,
+                        fromIndex: oldChildUnit._mountIndex,
+                    });
+                     // 删除节点的时候也要同时删掉对应的 unit
+                    this._renderedChildrenUnits = this._renderedChildrenUnits.filter(item => item !== oldChildUnit);
+                    $(document).undelegate(`.${oldChildUnit._rootId}`);
+                }
+                // 新的节点  新增
+                diffQueue.push({
+                    parentId: this._rootId,
+                    parentNode: $(`[data-reactid="${this._rootId}"]`),
+                    type: types.INSERT,
+                    toIndex: i,
+                    markup: newUnit.getMarkUp(`${this._rootId}.${i}`)
+                })
+            }
+            newUnit._mountIndex = i;
+        }
+        // 4. 删除老的里面未被复用的
+        for(let oldKey in oldChildrenUnitMap) {
+            let oldChild = oldChildrenUnitMap[oldKey];
+            if(!newChildrenUnitsMap.hasOwnProperty(oldKey)) {
+                diffQueue.push({
+                    parentId: this._rootId,
+                    parentNode: $(`[data-reactid="${this._rootId}"]`),
+                    type: types.REMOVE,
+                    fromIndex: oldChild._mountIndex
+                });
+                // 删除节点的时候也要同时删掉对应的 unit
+                this._renderedChildrenUnits = this._renderedChildrenUnits.filter(item => item !== oldChild);
+                // 同时删除事件委托
+                $(document).undelegate(`.${oldChild._rootId}`);
+            }
+        }
     }
 
     getNewChildren(oldChildrenUnitMap, newChildrenElements) {
-        let newChildren = [];
+        let newChildrenUnits = [],
+            newChildrenUnitsMap = {};
         newChildrenElements.forEach((newElement, index) => {
             // 代码里千万要给key属性，否则会走默认的index按顺序比较。调换顺序内容不变的情况下不能复用很浪费
             let newKey = (newElement.props && newElement.props.key) || index.toString();
@@ -165,15 +284,18 @@ class ReactNativeUnit extends Unit {
             if(showDeepCompare(oldElement, newElement)) {
                 // 更新老的之后放入新的数组里面 复用
                 oldUnit.update(newElement); 
-                newChildren.push(oldUnit);
+                newChildrenUnits.push(oldUnit);
+                newChildrenUnitsMap[newKey] = oldUnit;
             }
             else {
                 // 老的里面没有此元素则新建
                 let nextUnit = createReactUnit(newElement); 
-                newChildren.push(nextUnit);
+                newChildrenUnits.push(nextUnit);
+                newChildrenUnitsMap[newKey] = nextUnit;
+                this._renderedChildrenUnits[index] = nextUnit;
             }
-            return newChildren;
         })
+        return {newChildrenUnits, newChildrenUnitsMap};
     }
 
     getOldChildrenMap(childrenUnits=[]) {
@@ -188,7 +310,8 @@ class ReactNativeUnit extends Unit {
     }
 }
 
-// 负责渲染自定义 react 组件 (new出一个该类的实例，然后调用 render 方法)
+// 负责渲染自定义 react 组件 
+// (new出一个该类的实例，然后调用render方法，并对render返回的element继续执行此操作)
 class ReactCompositUnit extends Unit {
 
     // this._componentInstance 当前组件的实例
@@ -196,23 +319,21 @@ class ReactCompositUnit extends Unit {
     getMarkUp(rootId) {
         this._rootId = rootId;
         let {type: Component, props} = this._currentElement;
+        // 1. new出一个该react类的实例
         let componentInstance = this._componentInstance = new Component(props);
         // 让组件实例的currentUnit属性等于当前的 unit
         componentInstance._currentUnit = this;
-        // 声明周期方法 componentWillMount父类先执行字类再执行
+        // 生命周期方法 componentWillMount父类先执行字类再执行
         componentInstance.componentWillMount && componentInstance.componentWillMount();
-        // 下面写法在此处不能实现componentDidMount父类先执行字类再执行先执行child的再执行parent的
-        // $(document).on('mounted', () => {
-        //     componentInstance.componentDidMount && componentInstance.componentDidMount();
-        // })
-       
-        // render的返回结果 可能是各种类型(值、native：<div></div>、组件)  counter类返回的是number
+        // 2. 调用类实例的 render 方法
         let renderedElement = componentInstance.render();
-        // 递归渲染 组件render后的返回结果
-        let renderedUnit = this._renderedUnitInstance = createReactUnit(renderedElement);
+        // 3. 渲染组件render后的返回结果element  即再create一个unit，调用getMarkUp，得到 html字符串
+        // render的返回结果 返回的可能是个Dom｜react组件 ｜ 值，实际是个递归过程
         // 先序深度遍历 树 有儿子就进去 出来的时候再绑父亲 再出来再绑父亲
+        let renderedUnit = this._renderedUnitInstance = createReactUnit(renderedElement);
+        // 4. 调用unit的getMarkUp方法得到html字符串
         let markup = renderedUnit.getMarkUp(rootId);
-        // componentDidMount写在此处  在递归后绑定的事件肯定是先子后父
+        // componentDidMount写在此处 因为componentDidMount执行先子后父 在递归后绑定的事件肯定是先子后父
         $(document).on('mounted', () => {
             componentInstance.componentDidMount && componentInstance.componentDidMount();
         })
@@ -235,13 +356,14 @@ class ReactCompositUnit extends Unit {
         let preRenderedUnitInstance = this._renderedUnitInstance;
         // 上次渲染的元素
         let preRenderedElement = preRenderedUnitInstance._currentElement;
+        // 更新 state 之后再次调用 render
         let nextRenderElement = this._componentInstance.render();
         // 是否需要进行深比较 
         if(showDeepCompare(preRenderedElement, nextRenderElement)) {
             // 如果可以进行深比较 则把更新的工作交给上次渲染出来的 element 元素对应的 unit 进行处理
             preRenderedUnitInstance.update(nextRenderElement);
-            // 执行shouldComponentUpdate
-            this._componentInstance.shouldComponentUpdate && this._componentInstance.shouldComponentUpdate();
+            // 执行componentDidUpdate
+            this._componentInstance.componentDidUpdate && this._componentInstance.componentDidUpdate();
         }
         else {
             // 如果两个元素连类型都不一样，无需比较直接干掉老的元素新建新的
@@ -272,11 +394,11 @@ function createReactUnit(element) {
         return new ReactTextUnit(element);
     }
     if(element instanceof Element && typeof element.type === 'string') {
-        // Element类的实例 虚拟dom对象
+        // Element类的实例 原生dom对象
         return new ReactNativeUnit(element);
     }
     if(element instanceof Element && typeof element.type === 'function') {
-        // 类 {type:Counter, props: {name: 'cfm'}}
+        // 自定义react组件 类 {type:Counter, props: {name: 'cfm'}}
         return new ReactCompositUnit(element);
     }
 }
