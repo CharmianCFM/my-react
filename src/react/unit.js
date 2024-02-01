@@ -1,6 +1,11 @@
 import $ from 'jquery';
 import {Element} from './element.js';
 
+// 差异队列
+let diffQueue;
+// 更新的层级
+let updateDepth = 0;
+
 class Unit { 
     // 通过父类保存参数
     constructor(element) {
@@ -12,6 +17,7 @@ class Unit {
         throw new Error('字类必需实现此方法');
     }
 }
+
 // 渲染字符串
 class ReactTextUnit extends Unit {
     // 可以省略的 默认行为
@@ -35,6 +41,7 @@ class ReactTextUnit extends Unit {
         }
     }
 }
+
 // 渲染原生dom组件
 class ReactNativeUnit extends Unit {
     getMarkUp(rootId) { 
@@ -43,13 +50,15 @@ class ReactNativeUnit extends Unit {
         let tagStart = `<${type} data-reactid="${rootId}"`;
         let tagEnd = `</${type}>`;
         let childStr = '';
+        // 存储渲染的儿子节点 unit
+        this._renderedChildrenUnits = [];
         for(let propName in props) {
             if(/^on[A-Z]/.test(propName)) {
                 // <button data-reactid="0.1" onclick="function" say()="" {="" alert('hello');="" }=""><span data-reactid="0.1.0">123</span></button>
                 // 不能给字符串绑定事件 所以可以用事件委托 绑定到document上面，然后根据id判断真实触发的元素 （react的事件处理机制）
                 let eventType = propName.slice(2).toLowerCase();
-                // $(document).delegate(`[data-reactid="${rootId}"]`, `${eventType}.${rootId}`, props[propName]);
-                $(document).on(eventType, `[data-reactid="${rootId}"]`, props[propName]);
+                $(document).delegate(`[data-reactid="${rootId}"]`, `${eventType}.${rootId}`, props[propName]);
+                // $(document).on(eventType, `[data-reactid="${rootId}"]`, props[propName]);
             }
             else if(propName === 'style') { 
                 // 样式对象
@@ -79,8 +88,10 @@ class ReactNativeUnit extends Unit {
                 // }
                 // 递归循环子节点 
                 childStr = props[propName].map((child, index) => {
-                    let childInstance = createReactUnit(child);
-                    return childInstance.getMarkUp(`${rootId}.${index}`)
+                    let childUnit = createReactUnit(child);
+                    // 记录下来方便后续对 child 做 diff
+                    this._renderedChildrenUnits.push(childUnit); 
+                    return childUnit.getMarkUp(`${rootId}.${index}`)
                 }).join('');
             }
             else {
@@ -90,6 +101,90 @@ class ReactNativeUnit extends Unit {
         }
         // 返回拼接后的字符串
         return `${tagStart}>${childStr}${tagEnd}`
+    }
+
+    update(nextElement) {
+        let oldProps = this._currentElement.props;
+        let newProps = nextElement.props;
+        this.updateDomProperties(oldProps, newProps);
+        this.updateDomChildren(newProps.children);
+    }
+
+    updateDomProperties(oldProps, newProps) {
+        let propName;
+        for(propName in oldProps) {
+            if(!newProps.hasOwnProperty(propName)) { // 移除不存在的属性
+                $(`[data-reactid="${this._rootId}"]`).removeAttr(propName);
+            }
+            if(/^on[A-Z]/.test(propName)) { // 移除事件
+                $(document).undelegate(`.${this._rootId}`);
+            }
+        }
+        for(propName in newProps) {
+            if(propName === 'children') {
+                continue;
+            }
+            else if(/^on[A-Z]/.test(propName)) {
+                let eventType = propName.slice(2).toLowerCase();
+                $(document).delegate(`[data-reactid="${this._rootId}"]`, `${eventType}.${this._rootId}`, newProps[propName]);
+            }
+            else if(propName === 'style') {
+                const styleObj = newProps[propName];
+                Object.entries(styleObj).map(([attr, value]) => {
+                   $(`[data-reactid="${this._rootId}"`).css(attr, value);
+                });
+            }
+            else if(propName === 'className') {
+                $(`[data-reactid="${this._rootId}"`).attr('class', newProps[propName]);
+            }
+            else {
+                $(`[data-reactid="${this._rootId}"]`).prop(propName, newProps[propName])
+            }
+        }
+    }
+
+    // 对比新的儿子们和老的 找出差异
+    updateDomChildren(newChildrenElements) {
+        this.diff(diffQueue, newChildrenElements);
+    }
+
+    diff(diffQueue, newChildrenElements) {
+        let oldChildrenUnitMap = this.getOldChildrenMap(this._renderedChildrenUnits);
+        let newChildren = this.getNewChildren(oldChildrenUnitMap, newChildrenElements);
+    }
+
+    getNewChildren(oldChildrenUnitMap, newChildrenElements) {
+        let newChildren = [];
+        newChildrenElements.forEach((newElement, index) => {
+            // 代码里千万要给key属性，否则会走默认的index按顺序比较。调换顺序内容不变的情况下不能复用很浪费
+            let newKey = (newElement.props && newElement.props.key) || index.toString();
+            // 找到key相同的老的unit
+            let oldUnit = oldChildrenUnitMap[newKey]; 
+            // 获取老的元素
+            let oldElement = oldUnit && oldUnit._currentElement; 
+            if(showDeepCompare(oldElement, newElement)) {
+                // 更新老的之后放入新的数组里面 复用
+                oldUnit.update(newElement); 
+                newChildren.push(oldUnit);
+            }
+            else {
+                // 老的里面没有此元素则新建
+                let nextUnit = createReactUnit(newElement); 
+                newChildren.push(nextUnit);
+            }
+            return newChildren;
+        })
+    }
+
+    getOldChildrenMap(childrenUnits=[]) {
+        let map = {};
+        for(let i = 0; i < childrenUnits.length; i++) {
+            let unit = childrenUnits[i];
+            // 孩子元素有key用 key，没有 key用 index
+            let key = (unit._currentElement.props && unit._currentElement.props.key) || i.toString();
+            map[key] = unit;
+        }
+        return map;
     }
 }
 

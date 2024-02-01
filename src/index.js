@@ -18,9 +18,9 @@ class SubCounter extends React.Component {
         })
     }
     render() {
-        let p = React.createElement('p', {style: {color: 'red'}}, this.state.number);
+        let p = React.createElement('p', {}, this.state.number);
         let button = React.createElement('button', {onClick: this.increment}, '+');
-        return React.createElement('div', {id: 'counter'}, p, button);
+        return React.createElement('div', {id: 'counter', style:{backgroundColor: this.state.number%2==0 ? 'green':'red'}}, p, button);
     }
 }
 
@@ -45,15 +45,15 @@ class Counter extends React.Component {
     }
     render() {
         console.log(this.props.name);
-        // return <SubCounter />;
         return this.state.number;
+        // return <SubCounter />;
     }
 }
 
 // <Counter name='cfm'></Counter> 
 // babel编译之后 React.createElement(Counter, {name: 'cfm'})
 // 对应的 element就是{type: Counter, props: {name: 'cfm'}}
-React.render(React.createElement(Counter, {name: 'cfm'}),  document.getElementById('root'));
+React.render(React.createElement(SubCounter, {name: 'cfm'}),  document.getElementById('root'));
 
 
 
